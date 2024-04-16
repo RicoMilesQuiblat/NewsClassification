@@ -1,7 +1,4 @@
 import pandas as pd
-import tensorflow as tf
-import numpy as np
-from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.preprocessing import OneHotEncoder
 import nltk
 from nltk.corpus import stopwords
@@ -10,7 +7,9 @@ import re
 from sklearn.model_selection import  train_test_split
 from keras.models import Sequential
 from keras.layers import Dense,Dropout, Embedding, LSTM, Bidirectional
-from tqdm.keras import TqdmCallback
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+
 
 nltk.download("punkt")
 nltk.download("stopwords")
@@ -26,6 +25,10 @@ df = df.drop(columns=["date"])
 df = df.drop(columns=["authors"])
 categories = ["SPORTS", "POLITICS", "BUSINESS", "CRIME", "SCIENCE", "TECH"]
 df = df[df["category"].isin(categories)]
+
+num_rows = len(df)
+half = num_rows // 2
+df = df.iloc[:half // 4]
 
 df["headline"] = df["headline"].str.lower()
 df["category"] = df["category"].str.lower()
@@ -47,18 +50,19 @@ lemmatizer = WordNetLemmatizer()
 df["headline"] = df["headline"].apply(lambda x: " ".join([lemmatizer.lemmatize(word) for word in x]))
 df["short_description"] = df["short_description"].apply(lambda x: " ".join([lemmatizer.lemmatize(word) for word in x]))
 
-vectorizer = CountVectorizer()
+tokenizer = Tokenizer()
 
-df["text"] = df["headline"] + " " + df["short_description"]
+tokenizer.fit_on_texts(df["headline"] + " " + df["short_description"])
+sequences = tokenizer.texts_to_sequences(df["headline"] + " " + df["short_description"])
 
-features = vectorizer.fit_transform(df["text"])
+features = pad_sequences(sequences)
 
 enc = OneHotEncoder(handle_unknown="ignore")
 category = enc.fit_transform(df[["category"]]).toarray()
 
 x_train, x_test, y_train, y_test = train_test_split(features, category, test_size=0.2, random_state=42)
 
-vocab_size = len(vectorizer.get_feature_names_out())
+vocab_size = len(tokenizer.word_index) + 1
 
 output_size = category.shape[1]
 
@@ -69,10 +73,9 @@ model.add(Dropout(rate=0.5))
 model.add(Dense(units=128, activation="relu"))
 model.add(Dense(output_size, activation="softmax"))
 
-model.build(input_shape=(None, features.shape[1]))
 model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=["acc"])
 
-history = model.fit(x_train,y_train, epochs=10, batch_size=32, validation_split=0.2, shuffle=False, verbose=0, callbacks=[TqdmCallback(verbose=1)])
+history = model.fit(x_train,y_train, epochs=10, batch_size=32, validation_split=0.2, shuffle=False)
 
 model.evaluate(x_test, y_test)
 
