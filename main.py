@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.preprocessing import OneHotEncoder
 import nltk
@@ -9,26 +10,44 @@ from keras.models import Sequential
 from keras.layers import Dense,Dropout, Embedding, LSTM, Bidirectional
 from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
+from keras import regularizers
+import tensorflow as tf
+import seaborn as sns
+from sklearn.utils import resample
+from sklearn.metrics import confusion_matrix
 
 
-nltk.download("punkt")
-nltk.download("stopwords")
-nltk.download("wordnet")
-pd.options.display.max_rows = 10
+
+# nltk.download("punkt")
+# nltk.download("stopwords")
+# nltk.download("wordnet")
+
+
 filename = "C:/Users/user/Downloads/News/News.json"
 df = pd.read_json(filename, lines=True)
-
-
 df = df.dropna()
 df = df.drop(columns=["link"])
 df = df.drop(columns=["date"])
 df = df.drop(columns=["authors"])
-categories = ["SPORTS", "POLITICS", "BUSINESS", "CRIME", "SCIENCE", "TECH"]
+categories = ["WELLNESS", "ENTERTAINMENT", "POLITICS", "TRAVEL", "STYLE & BEAUTY"]
 df = df[df["category"].isin(categories)]
 
-num_rows = len(df)
-half = num_rows // 2
-df = df.iloc[:half // 4]
+majority = df[df["category"] == "POLITICS"]
+minorities = df[df["category"].isin(["TRAVEL", "STYLE & BEAUTY", "ENTERTAINMENT", "WELLNESS"])]
+
+
+minorities_upsampled = [resample(df[df["category"] == cls],
+                                 replace=True, n_samples=len(majority),
+                                 random_state=123) for cls in minorities["category"].unique()]
+
+df = pd.concat([majority] + minorities_upsampled)
+
+
+sns.countplot(x="category",
+              data=df,
+              order=df.category.value_counts().index
+              )
+
 
 df["headline"] = df["headline"].str.lower()
 df["category"] = df["category"].str.lower()
@@ -60,6 +79,8 @@ features = pad_sequences(sequences)
 enc = OneHotEncoder(handle_unknown="ignore")
 category = enc.fit_transform(df[["category"]]).toarray()
 
+
+
 x_train, x_test, y_train, y_test = train_test_split(features, category, test_size=0.2, random_state=42)
 
 vocab_size = len(tokenizer.word_index) + 1
@@ -67,16 +88,55 @@ vocab_size = len(tokenizer.word_index) + 1
 output_size = category.shape[1]
 
 model = Sequential()
-model.add(Embedding(vocab_size, 128))
+model.add(Embedding(vocab_size, 64))
 model.add(Bidirectional(LSTM(units=64)))
 model.add(Dropout(rate=0.5))
-model.add(Dense(units=128, activation="relu"))
-model.add(Dense(output_size, activation="softmax"))
+model.add(Dense(units=64, activation="relu", kernel_regularizer=regularizers.l2(0.01)))
+
+model.add(Dense(output_size, activation="softmax", kernel_regularizer=regularizers.l2(0.01)))
 
 model.compile(loss="categorical_crossentropy", optimizer="adam", metrics=["acc"])
 
 history = model.fit(x_train,y_train, epochs=10, batch_size=32, validation_split=0.2, shuffle=False)
 
+plt.figure()
+plt.plot(history.history["loss"], label="train")
+plt.plot(history.history["val_loss"], label="test")
+plt.legend()
+
 model.evaluate(x_test, y_test)
 
 
+
+y_pred = model.predict(x_test)
+
+def plot_cm(y_true, y_pred, class_names):
+    cm = confusion_matrix(y_true, y_pred)
+    fig, ax = plt.subplots(figsize=(18, 16))
+    ax = sns.heatmap(
+        cm,
+        annot=True,
+        fmt="d",
+        cmap=sns.diverging_palette(220,20, n= 7),
+        ax=ax
+
+    )
+
+    plt.ylabel("Actual")
+    plt.xlabel("Predicted")
+    ax.set_xticklabels(class_names)
+    ax.set_yticklabels(class_names)
+    b, t = plt.ylim()
+    b += 0.5
+    t -= 0.5
+    plt.ylim(b, t)
+    plt.show()
+
+
+plot_cm(
+    enc.inverse_transform(y_test),
+    enc.inverse_transform(y_pred),
+    enc.categories_[0]
+)
+
+model.save("C:/Users/user/Downloads/News/news_classification")
